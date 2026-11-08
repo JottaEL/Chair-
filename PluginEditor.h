@@ -12,8 +12,6 @@ public:
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
                            float startAngle, float endAngle, juce::Slider&) override;
-    void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h, float sliderPos,
-                           float minPos, float maxPos, juce::Slider::SliderStyle, juce::Slider&) override;
 };
 
 class CelesteChoirEditor : public juce::AudioProcessorEditor
@@ -39,16 +37,12 @@ private:
     CelesteChoirProcessor& proc;
     CelesteLookAndFeel lnf;
 
-    static constexpr int kKnobs = 12;
+    static constexpr int kKnobs = 10;
     std::array<Knob, kKnobs> knobs;
 
-    juce::Slider vowelSlider;
-    std::unique_ptr<SliderAtt> vowelAtt;
-    std::array<juce::TextButton, 5> vowelButtons;
-
-    juce::ComboBox voiceBox;
-    std::unique_ptr<ComboAtt> voiceAtt;
-    juce::Label voiceLabel, vowelLabel;
+    juce::ComboBox harmonyBox;
+    std::unique_ptr<ComboAtt> harmonyAtt;
+    juce::Label harmonyLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CelesteChoirEditor)
 };

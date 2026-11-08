@@ -10,10 +10,6 @@ CelesteLookAndFeel::CelesteLookAndFeel()
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     setColour (juce::Label::textColourId, c);
-    setColour (juce::TextButton::buttonColourId, Colour (0xff12365a));
-    setColour (juce::TextButton::buttonOnColourId, c);
-    setColour (juce::TextButton::textColourOffId, c);
-    setColour (juce::TextButton::textColourOnId, Colour (0xff06182b));
     setColour (juce::ComboBox::backgroundColourId, Colour (0xff12365a));
     setColour (juce::ComboBox::textColourId, juce::Colours::white);
     setColour (juce::ComboBox::outlineColourId, c);
@@ -55,20 +51,6 @@ void CelesteLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     g.fillPath (p, juce::AffineTransform::rotation (ang).translated (c.x, c.y));
 }
 
-void CelesteLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float sliderPos,
-                                           float, float, juce::Slider::SliderStyle, juce::Slider&)
-{
-    const float cy = (float) y + (float) h * 0.5f;
-    g.setColour (Colour (0xff1c3d5c));
-    g.fillRoundedRectangle ((float) x, cy - 3.f, (float) w, 6.f, 3.f);
-    g.setColour (celeste());
-    g.fillRoundedRectangle ((float) x, cy - 3.f, sliderPos - (float) x, 6.f, 3.f);
-    g.setColour (juce::Colours::white);
-    g.fillEllipse (sliderPos - 9.f, cy - 9.f, 18.f, 18.f);
-    g.setColour (celeste());
-    g.drawEllipse (sliderPos - 9.f, cy - 9.f, 18.f, 18.f, 2.f);
-}
-
 //==============================================================================
 CelesteChoirEditor::CelesteChoirEditor (CelesteChoirProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
@@ -76,21 +58,19 @@ CelesteChoirEditor::CelesteChoirEditor (CelesteChoirProcessor& p)
     setLookAndFeel (&lnf);
     setSize (900, 540);
 
-    struct Def { const char* id; const char* name; const char* suffix; };
+    struct Def { const char* id; const char* name; const char* suffix; int decimals; };
     const Def defs[kKnobs] =
     {
-        { "formant",  "FORMANTE",   "" },
-        { "ensemble", "ENSEMBLE",   " ct" },
-        { "breath",   "AIRE",       "" },
-        { "vibDepth", "VIBRATO",    " ct" },
-        { "vibRate",  "VEL. VIB.",  " Hz" },
-        { "gain",     "VOLUMEN",    " dB" },
-        { "attack",   "ATAQUE",     " s" },
-        { "decay",    "CAIDA",      " s" },
-        { "sustain",  "SOSTENIDO",  "" },
-        { "release",  "LIBERACION", " s" },
-        { "rvSize",   "REVERB TAM.", "" },
-        { "rvMix",    "REVERB MEZCLA", "" }
+        { "voices", "VOCES",     "",     0 },
+        { "detune", "DESAFINE",  " ct",  1 },
+        { "timing", "RETARDO",   " ms",  1 },
+        { "human",  "HUMANIZAR", "",     2 },
+        { "tone",   "TONO",      " Hz",  0 },
+        { "spread", "ABRIR",     "",     2 },
+        { "mix",    "MEZCLA",    "",     2 },
+        { "rvSize", "SALA",      "",     2 },
+        { "rvMix",  "REVERB",    "",     2 },
+        { "gain",   "VOLUMEN",   " dB",  1 }
     };
 
     for (int i = 0; i < kKnobs; ++i)
@@ -101,7 +81,7 @@ CelesteChoirEditor::CelesteChoirEditor (CelesteChoirProcessor& p)
         k.slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                                       juce::MathConstants<float>::pi * 2.75f, true);
         k.slider.setTextValueSuffix (defs[i].suffix);
-        k.slider.setNumDecimalPlacesToDisplay (2);
+        k.slider.setNumDecimalPlacesToDisplay (defs[i].decimals);
         addAndMakeVisible (k.slider);
 
         k.label.setText (defs[i].name, juce::dontSendNotification);
@@ -112,40 +92,13 @@ CelesteChoirEditor::CelesteChoirEditor (CelesteChoirProcessor& p)
         k.att = std::make_unique<SliderAtt> (proc.apvts, defs[i].id, k.slider);
     }
 
-    // Vocal
-    vowelSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    vowelSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    addAndMakeVisible (vowelSlider);
-    vowelAtt = std::make_unique<SliderAtt> (proc.apvts, "vowel", vowelSlider);
+    harmonyBox.addItemList ({ "Unisono (multitud)", "Mayor", "Menor", "Quintas y octavas" }, 1);
+    addAndMakeVisible (harmonyBox);
+    harmonyAtt = std::make_unique<ComboAtt> (proc.apvts, "harmony", harmonyBox);
 
-    const char* names[5] = { "A", "E", "I", "O", "U" };
-    for (int i = 0; i < 5; ++i)
-    {
-        auto& b = vowelButtons[(size_t) i];
-        b.setButtonText (names[i]);
-        b.onClick = [this, i] { vowelSlider.setValue ((double) i, juce::sendNotificationSync); };
-        addAndMakeVisible (b);
-    }
-
-    vowelSlider.onValueChange = [this]
-    {
-        const int nearest = juce::roundToInt (vowelSlider.getValue());
-        for (int j = 0; j < 5; ++j)
-            vowelButtons[(size_t) j].setToggleState (j == nearest, juce::dontSendNotification);
-    };
-    vowelSlider.onValueChange();
-
-    // Tipo de voz
-    voiceBox.addItemList ({ "Soprano", "Alto", "Tenor", "Bajo" }, 1);
-    addAndMakeVisible (voiceBox);
-    voiceAtt = std::make_unique<ComboAtt> (proc.apvts, "voice", voiceBox);
-
-    voiceLabel.setText ("VOZ", juce::dontSendNotification);
-    voiceLabel.setFont (juce::Font (13.f, juce::Font::bold));
-    addAndMakeVisible (voiceLabel);
-    vowelLabel.setText ("VOCAL  (arrastra para mezclar entre vocales)", juce::dontSendNotification);
-    vowelLabel.setFont (juce::Font (13.f, juce::Font::bold));
-    addAndMakeVisible (vowelLabel);
+    harmonyLabel.setText ("ARMONIA", juce::dontSendNotification);
+    harmonyLabel.setFont (juce::Font (13.f, juce::Font::bold));
+    addAndMakeVisible (harmonyLabel);
 }
 
 CelesteChoirEditor::~CelesteChoirEditor()
@@ -161,15 +114,13 @@ void CelesteChoirEditor::paint (juce::Graphics& g)
 
     const auto c = CelesteLookAndFeel::celeste();
 
-    // Titulo
     g.setColour (c);
     g.setFont (juce::Font (30.f, juce::Font::bold));
-    g.drawText ("CELESTE CHOIR", 30, 14, 400, 40, juce::Justification::centredLeft);
+    g.drawText ("CELESTE CHOIR FX", 30, 14, 500, 40, juce::Justification::centredLeft);
     g.setColour (c.withAlpha (0.6f));
     g.setFont (juce::Font (13.f));
-    g.drawText ("sintetizador de coro", 32, 50, 300, 20, juce::Justification::centredLeft);
+    g.drawText ("efecto que convierte tu voz en un coro", 32, 50, 400, 20, juce::Justification::centredLeft);
 
-    // Paneles
     g.setColour (juce::Colours::white.withAlpha (0.06f));
     g.fillRoundedRectangle (20.f, 80.f, 860.f, 90.f, 14.f);
     g.fillRoundedRectangle (20.f, 185.f, 860.f, 165.f, 14.f);
@@ -178,27 +129,25 @@ void CelesteChoirEditor::paint (juce::Graphics& g)
     g.drawRoundedRectangle (20.f, 80.f, 860.f, 90.f, 14.f, 1.f);
     g.drawRoundedRectangle (20.f, 185.f, 860.f, 165.f, 14.f, 1.f);
     g.drawRoundedRectangle (20.f, 360.f, 860.f, 165.f, 14.f, 1.f);
+
+    g.setColour (juce::Colours::white.withAlpha (0.75f));
+    g.setFont (juce::Font (14.f));
+    g.drawFittedText ("Habla o canta por la entrada: el plugin la multiplica en varias voces "
+                      "con desafine, retardo y posicion distintos, como si fueran muchas personas.",
+                      340, 92, 520, 66, juce::Justification::centredLeft, 3);
 }
 
 void CelesteChoirEditor::resized()
 {
-    // Fila de vocal / voz
-    voiceLabel.setBounds (40, 88, 100, 18);
-    voiceBox.setBounds (40, 112, 150, 32);
+    harmonyLabel.setBounds (40, 88, 200, 18);
+    harmonyBox.setBounds (40, 112, 270, 34);
 
-    for (int i = 0; i < 5; ++i)
-        vowelButtons[(size_t) i].setBounds (230 + i * 58, 100, 50, 50);
-
-    vowelLabel.setBounds (540, 88, 330, 18);
-    vowelSlider.setBounds (540, 112, 320, 32);
-
-    // Perillas: 2 filas de 6
-    const int colW = 140;
-    const int startX = 30;
+    const int colW = 170;
+    const int startX = 25;
     const int rowY[2] = { 195, 370 };
     for (int i = 0; i < kKnobs; ++i)
     {
-        const int row = i / 6, col = i % 6;
+        const int row = i / 5, col = i % 5;
         auto& k = knobs[(size_t) i];
         k.label.setBounds (startX + col * colW, rowY[row], colW, 18);
         k.slider.setBounds (startX + col * colW, rowY[row] + 20, colW, 130);

@@ -2,8 +2,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include <array>
-#include <cstdint>
+#include <vector>
 
+// Efecto: convierte una voz en un coro / multitud de voces.
 class CelesteChoirProcessor : public juce::AudioProcessor
 {
 public:
@@ -18,11 +19,11 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Celeste Choir"; }
-    bool acceptsMidi() const override { return true; }
+    const juce::String getName() const override { return "Celeste Choir FX"; }
+    bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 6.0; }
+    double getTailLengthSeconds() const override { return 3.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -37,48 +38,28 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
-    static constexpr int kVoices = 16;
-    static constexpr int kFormants = 4;
-    static constexpr int kChunk = 32;
-
-    struct BPCoef  { float g = 0, k = 1, a1 = 0, a2 = 0, a3 = 0; };
-    struct BPState { float s1 = 0, s2 = 0; };
+    static constexpr int kMaxVoices = 8;
 
     struct Voice
     {
-        bool held = false;        // tecla presionada
-        bool sustained = false;   // mantenida por el pedal
-        int note = -1;
-        float vel = 0.f;
-        float baseFreq = 440.f;
-        uint64_t age = 0;
-        float vibPhase = 0.f, vibAmt = 0.f;
-        float phase[2][3] {};
-        BPState st[2][kFormants] {};
-        juce::ADSR env;
+        float pan = 0.f, gain = 1.f;
+        float detuneRand = 0.f, timingRand = 1.f, toneRand = 0.5f;
+        float d[2] { 0.f, 0.f };        // posicion de las 2 cabezas del pitch shifter
+        float T = 0.f;                   // retardo base actual (muestras)
+        float drift = 0.f, driftTarget = 0.f;
+        int   driftCount = 0;
+        float lp = 0.f, lpCoef = 0.3f;
+        float gl = 0.7f, gr = 0.7f;
     };
 
-    struct Params
-    {
-        float vowel = 0, formantShift = 1, ensemble = 15, breath = 0.15f;
-        float vibDepth = 20, vibRate = 5.2f;
-        float gainLin = 0.5f;
-        int voiceType = 0;
-        juce::ADSR::Parameters adsr;
-    } params;
-
-    void readParams();
-    void handleMidi (const juce::MidiMessage& m);
-    Voice* allocateVoice();
-    void render (juce::AudioBuffer<float>& buffer, int start, int end);
-    void computeFormants (float vowel, BPCoef* coefs, float* gains) const;
-
-    std::array<Voice, kVoices> voices;
-    uint64_t ageCounter = 0;
-    bool pedalDown = false;
+    std::array<Voice, kMaxVoices> voices;
+    std::vector<float> buf;
+    int mask = 0, writePos = 0;
+    float W = 1440.f;                    // tamano de grano (muestras)
     double sr = 44100.0;
 
-    juce::SmoothedValue<float> vowelSmooth;
+    juce::AudioBuffer<float> wetBuf;
     juce::Random rnd;
     juce::Reverb reverb;
+    juce::SmoothedValue<float> mixS, gainS;
 };

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(CelesteChoir VERSION 1.0.0)
+project(CelesteChoirFX VERSION 1.0.0)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -8,18 +8,20 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+# El nombre del target se mantiene (CelesteChoir) para que el workflow de GitHub siga funcionando igual.
 juce_add_plugin(CelesteChoir
     COMPANY_NAME "MiEstudio"
-    IS_SYNTH TRUE
-    NEEDS_MIDI_INPUT TRUE
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE Mest
-    PLUGIN_CODE Clst
+    PLUGIN_CODE Cfxx
     FORMATS VST3
-    PRODUCT_NAME "Celeste Choir")
+    VST3_CATEGORIES Fx
+    PRODUCT_NAME "Celeste Choir FX")
 
 target_sources(CelesteChoir PRIVATE
     PluginProcessor.cpp

@@ -2,38 +2,16 @@
 #include "PluginEditor.h"
 #include <cmath>
 
-// Formantes (Hz) por tipo de voz [soprano, alto, tenor, bajo] x vocal [a e i o u] x 4 formantes
-static const float kFormantTable[4][5][4] =
+// Intervalos (semitonos) por voz para cada modo de armonia
+static const int kInterval[4][8] =
 {
-    { {800,1150,2900,3900}, {350,2000,2800,3600}, {270,2140,2950,3900}, {450,800,2830,3800}, {325,700,2700,3800} },
-    { {800,1150,2800,3500}, {400,1600,2700,3300}, {350,1700,2700,3700}, {450,800,2830,3500}, {325,700,2530,3500} },
-    { {650,1080,2650,2900}, {400,1700,2600,3200}, {290,1870,2800,3250}, {400,800,2600,2800}, {350,600,2700,2900} },
-    { {600,1040,2250,2450}, {400,1620,2400,2800}, {250,1750,2600,3050}, {400,750,2400,2600}, {350,600,2400,2675} }
+    { 0, 0, 0, 0, 0, 0, 0, 0 },          // Unisono (multitud)
+    { 0, 4, 7, -5, 12, 0, -12, 7 },      // Mayor
+    { 0, 3, 7, -5, 12, 0, -12, 7 },      // Menor
+    { 0, 7, 12, -12, 0, 7, -5, 12 }      // Quintas y octavas
 };
-static const float kBandwidth[4] = { 70.f, 90.f, 120.f, 130.f };
-static const float kFormantGain[4] = { 1.0f, 0.56f, 0.25f, 0.15f };
 
-// Detune relativo de cada oscilador del "ensemble" (canal L / canal R)
-static const float kDetune[2][3] = { { -1.0f, 0.35f, 0.9f }, { -0.8f, -0.3f, 1.0f } };
-
-static inline float polyBlep (float t, float dt)
-{
-    if (t < dt)         { t /= dt;           return t + t - t * t - 1.0f; }
-    if (t > 1.0f - dt)  { t = (t - 1.0f) / dt; return t * t + t + t + 1.0f; }
-    return 0.0f;
-}
-
-static inline float bandpass (const float g, const float k, const float a1, const float a2, const float a3,
-                              float& s1, float& s2, float v0)
-{
-    const float v3 = v0 - s2;
-    const float v1 = a1 * s1 + a2 * v3;
-    const float v2 = s2 + a2 * s1 + a3 * v3;
-    s1 = 2.0f * v1 - s1;
-    s2 = 2.0f * v2 - s2;
-    (void) g;
-    return v1 * k;
-}
+static const float kPan[8] = { -0.9f, 0.9f, -0.5f, 0.5f, -0.2f, 0.2f, -0.75f, 0.75f };
 
 //==============================================================================
 juce::AudioProcessorValueTreeState::ParameterLayout CelesteChoirProcessor::createLayout()
@@ -47,263 +25,193 @@ juce::AudioProcessorValueTreeState::ParameterLayout CelesteChoirProcessor::creat
         p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, name, range, def));
     };
 
-    f ("vowel",    "Vocal",         NR (0.f, 4.f, 0.001f), 0.f);
-    f ("formant",  "Formante",      NR (0.7f, 1.4f, 0.001f), 1.f);
-    f ("ensemble", "Ensemble",      NR (0.f, 50.f, 0.1f), 15.f);
-    f ("breath",   "Aire",          NR (0.f, 1.f, 0.001f), 0.15f);
-    f ("vibDepth", "Vibrato",       NR (0.f, 100.f, 0.1f), 20.f);
-    f ("vibRate",  "Vel. Vibrato",  NR (0.5f, 9.f, 0.01f), 5.2f);
-    f ("gain",     "Volumen",       NR (-24.f, 6.f, 0.1f), -6.f);
-    f ("attack",   "Ataque",        NR (0.01f, 4.f, 0.001f, 0.4f), 0.6f);
-    f ("decay",    "Caida",         NR (0.01f, 2.f, 0.001f, 0.5f), 0.3f);
-    f ("sustain",  "Sostenido",     NR (0.f, 1.f, 0.001f), 0.8f);
-    f ("release",  "Liberacion",    NR (0.05f, 6.f, 0.001f, 0.4f), 1.2f);
-    f ("rvSize",   "Reverb Tam.",   NR (0.f, 1.f, 0.001f), 0.6f);
-    f ("rvMix",    "Reverb Mezcla", NR (0.f, 1.f, 0.001f), 0.3f);
+    p.push_back (std::make_unique<AudioParameterInt> (ParameterID { "voices", 1 }, "Voces", 2, 8, 6));
+    f ("detune", "Desafine",  NR (0.f, 50.f, 0.1f), 14.f);
+    f ("timing", "Retardo",   NR (0.f, 50.f, 0.1f), 22.f);
+    f ("human",  "Humanizar", NR (0.f, 1.f, 0.001f), 0.5f);
+    f ("tone",   "Tono",      NR (1500.f, 16000.f, 1.f, 0.4f), 9000.f);
+    f ("spread", "Abrir",     NR (0.f, 1.f, 0.001f), 0.8f);
+    f ("mix",    "Mezcla",    NR (0.f, 1.f, 0.001f), 0.5f);
+    f ("rvSize", "Sala",      NR (0.f, 1.f, 0.001f), 0.5f);
+    f ("rvMix",  "Reverb",    NR (0.f, 1.f, 0.001f), 0.25f);
+    f ("gain",   "Volumen",   NR (-18.f, 9.f, 0.1f), 0.f);
 
-    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "voice", 1 }, "Voz",
-                 StringArray { "Soprano", "Alto", "Tenor", "Bajo" }, 1));
+    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "harmony", 1 }, "Armonia",
+                 StringArray { "Unisono (multitud)", "Mayor", "Menor", "Quintas y octavas" }, 0));
 
     return { p.begin(), p.end() };
 }
 
 //==============================================================================
 CelesteChoirProcessor::CelesteChoirProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (BusesProperties()
+                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "STATE", createLayout())
 {
 }
 
 bool CelesteChoirProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
+        && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo();
 }
 
-void CelesteChoirProcessor::prepareToPlay (double sampleRate, int)
+void CelesteChoirProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     sr = sampleRate;
-    for (auto& v : voices)
+    const int size = juce::nextPowerOfTwo ((int) (sr * 0.3));
+    buf.assign ((size_t) size, 0.f);
+    mask = size - 1;
+    writePos = 0;
+    W = (float) (0.030 * sr);
+
+    juce::Random r (42);
+    for (int i = 0; i < kMaxVoices; ++i)
     {
-        v = Voice();
-        v.env.setSampleRate (sr);
+        Voice v;
+        v.pan = kPan[i];
+        v.gain = 0.7f + 0.3f * r.nextFloat();
+        v.detuneRand = ((i % 2 == 0) ? -1.f : 1.f) * (0.3f + 0.7f * r.nextFloat());
+        v.timingRand = 0.2f + 0.8f * r.nextFloat();
+        v.toneRand = r.nextFloat();
+        v.d[0] = W * ((float) i / (float) kMaxVoices);
+        v.d[1] = std::fmod (v.d[0] + W * 0.5f, W);
+        v.driftTarget = r.nextFloat() * 2.f - 1.f;
+        v.drift = v.driftTarget;
+        v.driftCount = 1 + (int) (r.nextFloat() * (float) sr * 0.5f);
+        voices[(size_t) i] = v;
     }
-    vowelSmooth.reset (sr, 0.05);
-    vowelSmooth.setCurrentAndTargetValue (apvts.getRawParameterValue ("vowel")->load());
+
+    wetBuf.setSize (2, juce::jmax (samplesPerBlock, 512));
     reverb.setSampleRate (sr);
     reverb.reset();
-    pedalDown = false;
+
+    mixS.reset (sr, 0.03);
+    gainS.reset (sr, 0.03);
+    mixS.setCurrentAndTargetValue (apvts.getRawParameterValue ("mix")->load());
+    gainS.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (apvts.getRawParameterValue ("gain")->load()));
 }
 
-void CelesteChoirProcessor::readParams()
+void CelesteChoirProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
+    juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
+    if (buffer.getNumChannels() < 2 || n == 0)
+        return;
+
     auto get = [this] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
 
-    params.vowel        = get ("vowel");
-    params.formantShift = get ("formant");
-    params.ensemble     = get ("ensemble");
-    params.breath       = get ("breath");
-    params.vibDepth     = get ("vibDepth");
-    params.vibRate      = get ("vibRate");
-    params.gainLin      = juce::Decibels::decibelsToGain (get ("gain"));
-    params.voiceType    = juce::jlimit (0, 3, (int) std::lround (get ("voice")));
-    params.adsr.attack  = get ("attack");
-    params.adsr.decay   = get ("decay");
-    params.adsr.sustain = get ("sustain");
-    params.adsr.release = get ("release");
+    const int   nv        = juce::jlimit (2, kMaxVoices, (int) std::lround (get ("voices")));
+    const float detune    = get ("detune");
+    const float timingMs  = get ("timing");
+    const float human     = get ("human");
+    const float toneHz    = get ("tone");
+    const float spread    = get ("spread");
+    const int   harmony   = juce::jlimit (0, 3, (int) std::lround (get ("harmony")));
+
+    mixS.setTargetValue (get ("mix"));
+    gainS.setTargetValue (juce::Decibels::decibelsToGain (get ("gain")));
 
     juce::Reverb::Parameters rp;
-    const float mix = get ("rvMix");
     rp.roomSize   = get ("rvSize");
-    rp.damping    = 0.45f;
-    rp.wetLevel   = mix * 0.6f;
-    rp.dryLevel   = 1.0f - mix * 0.4f;
+    rp.damping    = 0.5f;
+    rp.wetLevel   = get ("rvMix") * 0.6f;
+    rp.dryLevel   = 1.0f;
     rp.width      = 1.0f;
     rp.freezeMode = 0.f;
     reverb.setParameters (rp);
-}
 
-CelesteChoirProcessor::Voice* CelesteChoirProcessor::allocateVoice()
-{
-    for (auto& v : voices)
-        if (! v.env.isActive())
-            return &v;
+    if (wetBuf.getNumSamples() < n)
+        wetBuf.setSize (2, n, false, false, true);
 
-    Voice* oldest = &voices[0];
-    for (auto& v : voices)
-        if (v.age < oldest->age)
-            oldest = &v;
-    return oldest;
-}
-
-void CelesteChoirProcessor::handleMidi (const juce::MidiMessage& m)
-{
-    if (m.isNoteOn())
+    // Parametros por voz que cambian por bloque (pan y tono)
+    for (int i = 0; i < nv; ++i)
     {
-        auto* v = allocateVoice();
-        v->note = m.getNoteNumber();
-        v->baseFreq = (float) juce::MidiMessage::getMidiNoteInHertz (v->note);
-        v->vel = 0.25f + 0.75f * m.getFloatVelocity();
-        v->held = true;
-        v->sustained = false;
-        v->age = ++ageCounter;
-        v->vibPhase = 0.f;
-        v->vibAmt = 0.f;
-        for (int ch = 0; ch < 2; ++ch)
-            for (int k = 0; k < 3; ++k)
-                v->phase[ch][k] = rnd.nextFloat();
-        v->env.setSampleRate (sr);
-        v->env.setParameters (params.adsr);
-        v->env.noteOn();
+        auto& v = voices[(size_t) i];
+        const float ang = (juce::jlimit (-1.f, 1.f, v.pan * spread) + 1.f) * juce::MathConstants<float>::pi * 0.25f;
+        v.gl = std::cos (ang);
+        v.gr = std::sin (ang);
+        const float fc = juce::jmin (toneHz * (0.6f + 0.4f * v.toneRand), (float) sr * 0.45f);
+        v.lpCoef = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * fc / (float) sr);
     }
-    else if (m.isNoteOff())
+
+    const float norm = 1.2f / std::sqrt ((float) nv);
+    const float driftCoef = 1.0f / (float) (sr * 0.35);
+    const float* inL = buffer.getReadPointer (0);
+    const float* inR = buffer.getReadPointer (1);
+    float* wl = wetBuf.getWritePointer (0);
+    float* wr = wetBuf.getWritePointer (1);
+
+    for (int s = 0; s < n; ++s)
     {
-        for (auto& v : voices)
-            if (v.held && v.note == m.getNoteNumber())
-            {
-                v.held = false;
-                if (pedalDown) v.sustained = true;
-                else           v.env.noteOff();
-            }
-    }
-    else if (m.isController() && m.getControllerNumber() == 64)
-    {
-        pedalDown = m.getControllerValue() >= 64;
-        if (! pedalDown)
-            for (auto& v : voices)
-                if (v.sustained) { v.sustained = false; v.env.noteOff(); }
-    }
-    else if (m.isAllNotesOff() || m.isAllSoundOff())
-    {
-        for (auto& v : voices) { v.held = false; v.sustained = false; v.env.noteOff(); }
-    }
-}
+        buf[(size_t) writePos] = 0.5f * (inL[s] + inR[s]);
 
-void CelesteChoirProcessor::computeFormants (float vowel, BPCoef* coefs, float* gains) const
-{
-    vowel = juce::jlimit (0.f, 4.f, vowel);
-    int i0 = (int) std::floor (vowel);
-    if (i0 > 3) i0 = 3;
-    const float frac = vowel - (float) i0;
-    const auto& tab = kFormantTable[params.voiceType];
+        float sumL = 0.f, sumR = 0.f;
 
-    for (int k = 0; k < kFormants; ++k)
-    {
-        float f = tab[i0][k] + frac * (tab[i0 + 1][k] - tab[i0][k]);
-        f *= params.formantShift;
-        f = juce::jlimit (80.f, (float) sr * 0.45f, f);
-
-        const float Q = f / kBandwidth[k];
-        auto& c = coefs[k];
-        c.g  = std::tan (juce::MathConstants<float>::pi * f / (float) sr);
-        c.k  = 1.0f / Q;
-        c.a1 = 1.0f / (1.0f + c.g * (c.g + c.k));
-        c.a2 = c.g * c.a1;
-        c.a3 = c.g * c.a2;
-        gains[k] = kFormantGain[k];
-    }
-}
-
-void CelesteChoirProcessor::render (juce::AudioBuffer<float>& buffer, int start, int end)
-{
-    auto* outL = buffer.getWritePointer (0);
-    auto* outR = buffer.getWritePointer (1);
-    const float makeup = 5.0f;
-
-    while (start < end)
-    {
-        const int n = juce::jmin (kChunk, end - start);
-        const float vowel = vowelSmooth.skip (n);
-
-        BPCoef coefs[kFormants];
-        float gains[kFormants];
-        computeFormants (vowel, coefs, gains);
-
-        const float vibInc = params.vibRate / (float) sr;
-        const float vibOnset = 1.0f / ((float) sr * 0.8f);
-        float ratio[2][3];
-        for (int ch = 0; ch < 2; ++ch)
-            for (int k = 0; k < 3; ++k)
-                ratio[ch][k] = std::exp2 (params.ensemble * kDetune[ch][k] / 1200.0f);
-
-        for (auto& v : voices)
+        for (int i = 0; i < nv; ++i)
         {
-            if (! v.env.isActive())
-                continue;
+            auto& v = voices[(size_t) i];
 
-            v.env.setParameters (params.adsr);
-
-            for (int i = 0; i < n; ++i)
+            if (--v.driftCount <= 0)
             {
-                v.vibPhase += vibInc;
-                if (v.vibPhase >= 1.f) v.vibPhase -= 1.f;
-                v.vibAmt = juce::jmin (1.0f, v.vibAmt + vibOnset);
-
-                const float lfo = std::sin (juce::MathConstants<float>::twoPi * v.vibPhase);
-                const float f0 = v.baseFreq * std::exp2 (params.vibDepth * v.vibAmt * lfo / 1200.0f);
-                const float e = v.env.getNextSample() * v.vel;
-
-                float sample[2];
-                for (int ch = 0; ch < 2; ++ch)
-                {
-                    float s = 0.f;
-                    for (int k = 0; k < 3; ++k)
-                    {
-                        const float dt = juce::jmin (0.45f, f0 * ratio[ch][k] / (float) sr);
-                        float ph = v.phase[ch][k] + dt;
-                        if (ph >= 1.f) ph -= 1.f;
-                        v.phase[ch][k] = ph;
-                        s += (2.f * ph - 1.f) - polyBlep (ph, dt);
-                    }
-                    s *= (1.0f / 3.0f);
-                    const float noise = rnd.nextFloat() * 2.f - 1.f;
-                    const float x = s + params.breath * 0.6f * noise;
-
-                    float y = 0.f;
-                    for (int k = 0; k < kFormants; ++k)
-                    {
-                        const auto& c = coefs[k];
-                        auto& st = v.st[ch][k];
-                        y += gains[k] * bandpass (c.g, c.k, c.a1, c.a2, c.a3, st.s1, st.s2, x);
-                    }
-                    sample[ch] = y * makeup;
-                }
-
-                outL[start + i] += sample[0] * e;
-                outR[start + i] += sample[1] * e;
+                v.driftTarget = rnd.nextFloat() * 2.f - 1.f;
+                v.driftCount = 1 + (int) ((0.25f + 0.9f * rnd.nextFloat()) * (float) sr);
             }
+            v.drift += (v.driftTarget - v.drift) * driftCoef;
+
+            const float cents = detune * v.detuneRand
+                              + 100.f * (float) kInterval[harmony][i]
+                              + human * 20.f * v.drift;
+            const float ratio = std::exp2 (cents / 1200.f);
+            const float step = 1.0f - ratio;
+
+            const float Ttarget = timingMs * 0.001f * (float) sr * v.timingRand;
+            v.T += (Ttarget - v.T) * 0.002f;
+
+            float out = 0.f;
+            for (int h = 0; h < 2; ++h)
+            {
+                v.d[h] += step;
+                if (v.d[h] < 0.f)        v.d[h] += W;
+                else if (v.d[h] >= W)    v.d[h] -= W;
+
+                const float sn = std::sin (juce::MathConstants<float>::pi * v.d[h] / W);
+                const float w = sn * sn;
+
+                const float delay = v.T + v.d[h] + 2.0f;
+                const float rpos = (float) writePos - delay;
+                const int i0 = (int) std::floor (rpos);
+                const float fr = rpos - (float) i0;
+                const float a = buf[(size_t) (i0 & mask)];
+                const float b = buf[(size_t) ((i0 + 1) & mask)];
+                out += (a + fr * (b - a)) * w;
+            }
+
+            v.lp += v.lpCoef * (out - v.lp);
+            out = v.lp * v.gain;
+
+            sumL += out * v.gl;
+            sumR += out * v.gr;
         }
-        start += n;
+
+        writePos = (writePos + 1) & mask;
+        wl[s] = sumL * norm;
+        wr[s] = sumR * norm;
     }
-}
 
-void CelesteChoirProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
-{
-    juce::ScopedNoDenormals noDenormals;
-    const int numSamples = buffer.getNumSamples();
-    buffer.clear();
+    reverb.processStereo (wl, wr, n);
 
-    readParams();
-    vowelSmooth.setTargetValue (params.vowel);
-
-    int pos = 0;
-    for (const auto meta : midi)
+    float* outL = buffer.getWritePointer (0);
+    float* outR = buffer.getWritePointer (1);
+    for (int s = 0; s < n; ++s)
     {
-        const int t = juce::jlimit (pos, numSamples, meta.samplePosition);
-        render (buffer, pos, t);
-        pos = t;
-        handleMidi (meta.getMessage());
-    }
-    render (buffer, pos, numSamples);
-
-    reverb.processStereo (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples);
-
-    buffer.applyGain (params.gainLin);
-
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        auto* d = buffer.getWritePointer (ch);
-        for (int i = 0; i < numSamples; ++i)
-            d[i] = std::tanh (d[i]);
+        const float mix = mixS.getNextValue();
+        const float g = gainS.getNextValue();
+        const float dryG = std::cos (mix * juce::MathConstants<float>::halfPi);
+        const float wetG = std::sin (mix * juce::MathConstants<float>::halfPi);
+        outL[s] = (outL[s] * dryG + wl[s] * wetG) * g;
+        outR[s] = (outR[s] * dryG + wr[s] * wetG) * g;
     }
 }
 
